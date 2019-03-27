@@ -487,7 +487,6 @@ class ConfocalLogic(GenericLogic):
         # Arrays for retrace line
         self._return_XL = np.linspace(self._XL[-1], self._XL[0], self.return_slowness)
         self._return_AL = np.zeros(self._return_XL.shape)
-
         if self._zscan:
             self._image_vert_axis = self._Z
             # update image scan direction from setting

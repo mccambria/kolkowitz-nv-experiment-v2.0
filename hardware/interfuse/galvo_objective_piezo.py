@@ -13,6 +13,7 @@ Created on Tue Mar 26 21:16:45 2019
 # User modules
 from core.module import Base
 from core.module import Connector
+from core.module import ConfigOption
 from interface.confocal_scanner_interface import ConfocalScannerInterface
 
 # Library modules
@@ -29,7 +30,7 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
     _modclass = 'hardware.interfuse'
 
     # Connectors
-    galvo = Connector(interface='NationalInstrumentsXSeries')
+    galvo = Connector(interface='ConfocalScannerInterface')
 
     # Piezo
     _piezoSerial = ConfigOption('piezo_serial', missing='error')
@@ -37,13 +38,18 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
     _piezoDllPath = os.path.abspath(os.path.join(os.path.dirname(__file__),
                                                  "GCSTranslator",
                                                  "PI_GCS2_DLL_x64.dll"))
+    
+    _piezo_voltage_ranges = ConfigOption('piezo_voltage_ranges', missing='error')
+    _piezo_position_ranges = ConfigOption('piezo_position_ranges', missing='error')
 
     def on_activate(self):
         """Initialisation performed during activation of the module."""
 
         self._galvo = self.galvo()
-        self._piezo = GCSDevice(devname=_piezoModel, gcsdll=_piezoDllPath)
-        self._piezo.ConnectUSB(piezoSerial)
+        self._piezo = GCSDevice(devname=self._piezoModel,
+                                gcsdll=self._piezoDllPath)
+        self._piezo.ConnectUSB(self._piezoSerial)
+        self._piezo_axis = self._piezo.axes[0]
 
     def on_deactivate(self):
         """Deactivate the module."""
@@ -58,7 +64,7 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
         """
 
         galvoReturn = self._galvo.reset_hardware()
-        this._piezo.close()
+        self._piezo.CloseConnection()
 
         return galvoReturn
 
@@ -168,25 +174,24 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
         galvoReturn = self._galvo.scanner_set_position(x, y)
 
         # Set the piezo
-        axis = self._piezo.axes()[0]  # Just one axis for this device
-        self._piezo.SVO(axis, True) # Turn on closed loop feedback
-        self._piezo.MOV(axis, z)
-        pitools.waitontarget(self._piezo) # Wait until we get to the position
+        self.log.info('Z: ' + str(z))
+        self._set_piezo_voltage(z)
 
         return galvoReturn
 
     def get_scanner_position(self):
         """Get the current position of the scanner hardware.
 
-        @return list(float): current position in [x, y, z].
+        @return list(float): current position in [x, y, z] in meters
         """
 
         galvoPos = self._galvo.get_scanner_position()
 
-        piezoAxis = piezo.axes()[0]
-        piezoPos = [piezo.qPOS(piezoAxis)]
+        piezoAxis = self._piezo.axes[0]
+        piezoPos = self._piezo.qPOS()[piezoAxis]
+        piezoPos = piezoPos * (10**-6)  # qPOS returns position in microns
 
-        return galvoPos + piezoPos
+        return galvoPos + [piezoPos]
 
     def scan_line(self, line_path=None, pixel_clock=False):
         """Scans a line and returns the counts on that line.
@@ -199,7 +204,13 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
         @return float[k][m]: the photon counts per second for
             k pixels with m channels
         """
-        pass
+        
+        if line_path is not None:
+            galvo_path = line_path[:][0:2]
+        
+        galvoReturn = self._galvo.scan_line(galvo_path, pixel_clock)
+        
+        return galvoReturn
 
     def close_scanner(self):
         """Closes the scanner and cleans up afterwards.
@@ -211,10 +222,19 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
 
         return galvoReturn
 
-    def close_scanner_clock(self, power=0):
+    def close_scanner_clock(self):
         """Closes the clock and cleans up afterwards.
 
         @return int: error code (0:OK, -1:error)
         """
 
-        return self._galvo.close_scanner_clock(power)
+        return self._galvo.close_scanner_clock()
+    
+    def _set_piezo_voltage(self, voltage):
+        """Write a z voltage to the piezo."""
+        
+        # Turn off closed loop feedback
+        self._piezo.SVO(self._piezo_axis, False)
+    
+        # Write the value
+        self._piezo.SVA(self._piezo_axis, voltage)
