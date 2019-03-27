@@ -21,7 +21,6 @@ from collections import OrderedDict
 # Library modules
 import os
 from pulsestreamer import PulseStreamer
-from pulsestreamer import Sequence
 from pulsestreamer import TriggerRearm
 from pulsestreamer import TriggerStart
 from pulsestreamer import OutputState
@@ -46,7 +45,7 @@ class Pulser(Base, PulserInterface):
     """
     _modclass = 'pulserinterface'
     _modtype = 'hardware'
-    
+
     _low = 0
     _high = 1
 
@@ -82,33 +81,11 @@ class Pulser(Base, PulserInterface):
         self.current_loaded_asset = None
 
     def get_constraints(self):
-        """ Retrieve the hardware constrains from the Pulsing device.
+        """
+        Retrieve the hardware constrains from the Pulsing device.
 
-        @return dict: dict with constraints for the sequence generation and GUI
-
-        Provides all the constraints (e.g. sample_rate, amplitude,
-        total_length_bins, channel_config, ...) related to the pulse generator
-        hardware to the caller.
-        The keys of the returned dictionary are the str name for the constraints
-        (which are set in this method). No other keys should be invented. If you
-        are not sure about the meaning, look in other hardware files to get an
-        impression. If still additional constraints are needed, then they have
-        to be add to all files containing this interface.
-        The items of the keys are again dictionaries which have the generic
-        dictionary form:
-            {'min': <value>,
-             'max': <value>,
-             'step': <value>,
-             'unit': '<value>'}
-
-        Only the keys 'activation_config' and differs, since it contain the
-        channel configuration/activation information.
-
-        If the constraints cannot be set in the pulsing hardware (because it
-        might e.g. has no sequence mode) then write just zero to each generic
-        dict. Note that there is a difference between float input (0.0) and
-        integer input (0).
-        ALL THE PRESENT KEYS OF THE CONSTRAINTS DICT MUST BE ASSIGNED!
+        @return PulserConstraints: dict with constraints for the sequence
+            generation and GUI
         """
         constraints = PulserConstraints()
 
@@ -131,8 +108,10 @@ class Pulser(Base, PulserInterface):
         constraints.d_ch_high.step = 0.0
         constraints.d_ch_high.default = 3.3
 
-        # sample file length max is not well-defined for PulseStreamer, which collates sequential identical pulses into
-        # one. Total number of not-sequentially-identical pulses which can be stored: 1 M.
+        # Sample file length max is not well-defined for PulseStreamer,
+        # which collates sequential identical pulses into one.
+        # Total number of not-sequentially-identical pulses which
+        # can be stored is 10^6.
         constraints.waveform_length.min = 1
         constraints.waveform_length.max = 134217728
         constraints.waveform_length.step = 1
@@ -149,102 +128,69 @@ class Pulser(Base, PulserInterface):
         return constraints
 
     def on_activate(self):
-        """ Establish connection to pulse streamer and tell it to cancel all operations. """
+        """
+        Establish connection to pulse streamer and tell it to
+        cancel all operations
+        """
         self.pulse_streamer = PulseStreamer(self._pulsestreamer_ip)
         self.pulser_off()
         self.current_status = 0
 
     def on_deactivate(self):
-        """ Break the connection to the pulse streamer """
+        """
+        Break the connection to the pulse streamer.
+        """
         del self.pulse_streamer
-        
+
     def pulser_on(self):
-        """ Switches the pulsing device on.
+        """
+        Switches the pulsing device on.
 
         @return int: error code (0:OK, -1:error)
         """
-        
+
         # start the pulse sequence
         self.pulse_streamer.startNow()
         self.current_status = 1
         return 0
 
     def pulser_off(self):
-        """ Switches the pulsing device off.
+        """
+        Switches the pulsing device off.
 
         @return int: error code (0:OK, -1:error)
         """
-        
+
         # stop the pulse sequence
         #channels = self._convert_to_bitmask([self._laser_channel, self._uw_x_channel])
         self.pulse_streamer.constant(state=OutputState.ZERO())
         self.current_status = 0
         return 0
-        
-    def write_sequence(self, name, sequence, numRepeat):
-        """ Streams a sequence. It'll start when you call pulser_on.
-    
-        @param str name: the name of the waveform to be created/append to
+
+    def write_sequence(self, sequence, numRepeat):
+        """
+        Streams a sequence. It'll start when you call pulser_on.
+
         @param Sequence sequence: The sequence to stream
         @param int numRepeat: Number of times to stream the sequence, -1 for infinite
-        
+
         @return int: error code (0:OK, -1:error)
         """
-        
+
         self._sequence = sequence
         self._num_repeat = numRepeat
-        
+
         # Set the PulseStreamer to start as soon as it receives the stream from
         # from the computer
         self.pulse_streamer.setTrigger(start=TriggerStart.SOFTWARE,
                                        rearm=TriggerRearm.AUTO)
-    
+
         # Run the stream
         self.pulse_streamer.stream(self._sequence, self._num_repeat)
         self.log.info('Asset uploaded to PulseStreamer')
-        
+
         return 0
-    
-    def get_cont_illum_clock_seq(self, period, readout=None):
-    
-        seq = Sequence()
-    
-        train = [(100, self._high), (period - 100, self._low)]
-        seq.setDigital(self._clock_channel, train)
-    
-        if readout is not None:
-            train = [(period - readout, self._low), (readout, self._high)]
-            seq.setDigital(self._counter_gate_channel, train)
-    
-        train = [(period, self._high)]
-        seq.setDigital(self._green_aom_channel, train)
-        
-        return seq
-        
-    def stream_immediate(self, sequence, numRepeat):
-        """ Streams a sequence and starts it immediately.
-    
-        @param Sequence sequence: The sequence to stream
-        
-        @param int numRepeat: Number of times to stream the sequence, -1 for infinite
-        """
-        
-        
-        
-        # Set the PulseStreamer to start as soon as it receives the stream from
-        # from the computer
-        self.pulse_streamer.setTrigger(start=TriggerStart.SOFTWARE,
-                                       rearm=TriggerRearm.AUTO)
-    
-        # Set up the stream
-        self._sequence = sequence
-        self._num_repeat = numRepeat
-        self.pulse_streamer.stream(self._sequence, self._num_repeat)
-        self.log.info('Asset uploaded to PulseStreamer')
-        
-        # Run the stream
-        self.pulser_on()
-        
+
     def load_asset(self, asset_name, load_dict=None):
         """ Loads a sequence or waveform to the specified channel of the pulsing
             device.
@@ -267,7 +213,7 @@ class Pulser(Base, PulserInterface):
 
         self.log.error('Reading from files is not yet implemented with the latest client lib.')
         return -1
-    
+
 #        # ignore if no asset_name is given
 #        if asset_name is None:
 #            self.log.warning('"load_asset" called with asset_name = None.')
@@ -283,7 +229,7 @@ class Pulser(Base, PulserInterface):
 #        # get samples from file
 #        filepath = os.path.join(self.host_waveform_directory, asset_name + '.pstream')
 #        pulse_sequence_raw = dill.load(open(filepath, 'rb'))
-#        
+#
 #        pulse_sequence = []
 #        for pulse in pulse_sequence_raw:
 #            pulse_sequence.append(pulse_streamer_pb2.PulseMessage(ticks=pulse[0], digi=pulse[1], ao0=0, ao1=1))

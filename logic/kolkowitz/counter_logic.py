@@ -59,7 +59,7 @@ class CounterLogic(GenericLogic):
     _modtype = 'logic'
 
     ## declare connectors
-    counter1 = Connector(interface='SlowCounterInterface')
+    counter1 = Connector(interface='kolkowitz.slow_counter_interface')
     clock1 = Connector(interface='kolkowitz.pulser_interface')
     savelogic = Connector(interface='SaveLogic')
 
@@ -408,7 +408,7 @@ class CounterLogic(GenericLogic):
             # Set up clock
             period = int((1/self._count_frequency) * 10**9)  # Period in ns
             sequence = self._clock_device.get_cont_illum_clock_seq(period)
-            clock_status = self._clock_device.write_sequence('counter_square_wave',
+            clock_status = self._clock_device.write_sequence('cont_illum_clock',
                                                              sequence, -1)
             if clock_status < 0:
                 self.module_state.unlock()
@@ -455,7 +455,7 @@ class CounterLogic(GenericLogic):
         """ This method gets the count data from the hardware for the continuous counting mode (default).
 
         It runs repeatedly in the logic module event loop by being connected
-        to sigCountContinuousNext and emitting sigCountContinuousNext through a queued connection.
+        to sigCountDataNext and emitting sigCountDataNext through a queued connection.
         """
         if self.module_state() == 'locked':
             with self.threadlock:
