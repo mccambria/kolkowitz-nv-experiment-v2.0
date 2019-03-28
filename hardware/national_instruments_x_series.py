@@ -1285,7 +1285,6 @@ class NationalInstrumentsXSeries(Base, SlowCounterInterface, ConfocalScannerInte
             daq.DAQmxSetSampTimingType(self._scanner_ao_task, daq.DAQmx_Val_SampClk)
             self._set_up_line(np.shape(line_path)[1])
             line_volts = self._scanner_position_to_volt(line_path)
-            # write the positions to the analog output
             written_voltages = self._write_scanner_ao(
                 voltages=line_volts,
                 length=self._line_length,

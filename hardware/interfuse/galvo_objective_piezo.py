@@ -175,8 +175,7 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
         galvoReturn = self._galvo.scanner_set_position(x, y)
 
         # Set the piezo
-        self.log.info('Z: ' + str(z))
-        self._set_piezo_voltage(z)
+        self._set_piezo_position(z)
 
         return galvoReturn
 
@@ -190,14 +189,15 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
 
         piezoAxis = self._piezo.axes[0]
         piezoPos = self._piezo.qPOS()[piezoAxis]
-        piezoPos = piezoPos * (10**-6)  # qPOS returns position in microns
+        
+        qudi_piezo_pos = self._piezo_pi_position_to_qudi_position(piezoPos)
 
-        return galvoPos + [piezoPos]
+        return galvoPos + [qudi_piezo_pos]
 
     def scan_line(self, line_path=None, pixel_clock=False):
         """Scans a line and returns the counts on that line.
 
-        @param numpy.ndarray(float) line_path: k x n list defining the
+        @param numpy.ndarray(float) line_path: k x n array defining the
             pixel positions, k is number of pixels, n is number of axes
         @param bool pixel_clock: whether we need to output
             a pixel clock for this line
@@ -207,6 +207,7 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
         """
 
         if line_path is None:
+            self.log.error('line_path must be specified.')
             return -1
 
         # Figure out what axes we're scanning.
@@ -216,16 +217,17 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
         zScan = False
 
         # Get the values for each axis
-        galvo_path = line_path[:][0:2]
-        galvo_path_list = galvo_path.astype(list)
-        xVals = galvo_path_list[:][0]
-        yVals = galvo_path_list[:][1]
-        zVals = line_path[:][2]
+        galvo_path = line_path[0:2, :]
+        xVals = galvo_path[0, :].tolist()
+        yVals = galvo_path[1, :].tolist()
+        
+        piezo_path = line_path[2, :]
+        zVals = piezo_path.tolist()
 
         # Get the first value for each axis
-        firstX = line_path[0]
-        firstY = line_path[0]
-        firstZ = line_path[0]
+        firstX = xVals[0]
+        firstY = yVals[0]
+        firstZ = zVals[0]
 
         # Check if the scan is constant along a given axis. If all the
         # values along the axis are the same, then it is constant.
@@ -238,6 +240,7 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
             if constantX and constantY:
                 zScan = True
             else:
+                self.log.error('This module only supports scans in xy or z.')
                 return -1
 
         if zScan:
@@ -247,7 +250,7 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
 
         return counts
 
-    def _scan_z_line(self, x_pos, y_pos, z_path, pixel_clock=False):
+    def _scan_z_line(self, x, y, z_path, pixel_clock=False):
         """Scans a line in z and returns the counts along the line.
 
         @param numpy.ndarray(float) line_path: k x n list defining the
@@ -258,20 +261,25 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
         @return numpy.ndarray(float): k x m, the photon counts per second for
             k pixels with m channels
         """
-
-        galvo_vals = numpy.array([[x_pos, y_pos]])
+        
+        # Based on the sample clock, the AO write task expects more than one
+        # sample per channel. We only really want to write one sample
+        # per channel, but since all the samples are the same it doesn't
+        # matter if we write two. 
+        galvo_vals = numpy.vstack(([x, x], [y, y]))
 
         for z_index in range(len(z_path)):
 
             z_pos = z_path[z_index]
-            self._set_piezo_voltage(z_pos)
+            self._set_piezo_position(z_pos)
 
-            new_counts = self._galvo.scan_line(galvo_vals, pixel_clock)
+            # Take just the first sample since we actually collected two. 
+            new_count = [self._galvo.scan_line(galvo_vals, pixel_clock)[0, :]]
 
             if z_index == 0:
-                counts = new_counts
+                counts = new_count
             else:
-                counts.append(new_counts)
+                counts = numpy.vstack((counts, new_count))
 
     def close_scanner(self):
         """Closes the scanner and cleans up afterwards.
@@ -291,10 +299,20 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
 
         return self._galvo.close_scanner_clock()
 
-    def _set_piezo_voltage(self, voltage):
-        """Write a z voltage to the piezo."""
+    def _set_piezo_position(self, position):
+        """Write a z voltage to the piezo.
+        
+        @param float position: The position according to qudi (meters)
+        """
+        
+        # The piezo range is 0-100 um according to PI,
+        # but qudi expects ranges centered about 0
+        voltage = self._piezo_qudi_position_to_pi_voltage(position)
 
-        if (voltage < 0) or (voltage > 100):
+        piezo_vol_min = self._piezo_position_ranges[0]
+        piezo_vol_max = self._piezo_position_ranges[1]
+
+        if (voltage < piezo_vol_min) or (voltage > piezo_vol_max):
             return
 
         # Turn off closed loop feedback
@@ -302,3 +320,38 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
 
         # Write the value
         self._piezo.SVA(self._piezo_axis, voltage)
+        
+    def _piezo_qudi_position_to_pi_voltage(self, qudi_position):
+        """Map the qudi position to the instrument voltage.
+        
+        @param float position: The position according to qudi (meters)
+        
+        @return float: The corresponding physical voltage of the piezo
+        """
+        
+        # Qudi passes the position in meters.
+        micron_qudi_position = qudi_position * (10**6)
+        
+        # The piezo range is 0-100 um according to PI,
+        # but qudi expects ranges centered about 0.
+        # Besides this offset, the micron: voltage mapping is 1:1.
+        voltage = micron_qudi_position + 50
+        
+        return voltage
+    
+    def _piezo_pi_position_to_qudi_position(self, pi_position):
+        """Map the pi position to the qudi position.
+        
+        @param float position: The position according to qudi (um)
+        
+        @return float: The corresponding position in qudi (meters)
+        """
+        
+        # The piezo range is 0-100 um according to PI,
+        # but qudi expects ranges centered about 0
+        qudi_micron_position = pi_position - 50  
+        
+        # Qudi expects meters
+        qudi_position = qudi_micron_position * (10**-6)  
+        
+        return qudi_position

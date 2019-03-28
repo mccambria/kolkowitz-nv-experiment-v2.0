@@ -302,14 +302,34 @@ class OptimizerLogic(GenericLogic):
         lsx = np.linspace(scanner_pos[0], start_pos[0], self.return_slowness)
         lsy = np.linspace(scanner_pos[1], start_pos[1], self.return_slowness)
         lsz = np.linspace(scanner_pos[2], start_pos[2], self.return_slowness)
-        if n_ch <= 3:
-            move_to_start_line = np.vstack((lsx, lsy, lsz)[0:n_ch])
+        if n_ch <= 2:
+            xy_line = np.vstack((lsx, lsy, lsz)[0:n_ch])
+            z_line = None
+        elif n_ch == 3:
+            xy_line = np.vstack((lsx,
+                                 lsy,
+                                 np.ones(lsx.shape) * scanner_pos[2]))
+            z_line = np.vstack((np.ones(lsx.shape) * start_pos[0],
+                                np.ones(lsx.shape) * start_pos[1],
+                                lsz))
         else:
-            move_to_start_line = np.vstack((lsx, lsy, lsz, np.ones(lsx.shape) * scanner_pos[3]))
+            xy_line = np.vstack((lsx,
+                                 lsy,
+                                 np.ones(lsx.shape) * scanner_pos[2], 
+                                 np.ones(lsx.shape) * scanner_pos[3]))
+            z_line = np.vstack((np.ones(lsx.shape) * start_pos[0],
+                                np.ones(lsx.shape) * start_pos[1],
+                                lsz, 
+                                np.ones(lsx.shape) * scanner_pos[3]))
 
-        counts = self._scanning_device.scan_line(move_to_start_line)
+        counts = self._scanning_device.scan_line(xy_line)
         if np.any(counts == -1):
             return -1
+        
+        if z_line is not None:
+            counts = self._scanning_device.scan_line(z_line)
+            if np.any(counts == -1):
+                return -1
 
         time.sleep(self.hw_settle_time)
         return 0
