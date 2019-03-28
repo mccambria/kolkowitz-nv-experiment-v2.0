@@ -94,9 +94,10 @@ class OptimizerLogic(GenericLogic):
         self.y_range = self._scanning_device.get_position_range()[1]
         self.z_range = self._scanning_device.get_position_range()[2]
 
-        self._initial_pos_x = np.average(self.x_range)
-        self._initial_pos_y = np.average(self.y_range)
-        self._initial_pos_z = np.average(self.z_range)
+        self._initial_pos_x = (self.x_range[0] + self.x_range[1]) / 2
+        self._initial_pos_y = (self.y_range[0] + self.y_range[1]) / 2
+        self._initial_pos_z = (self.z_range[0] + self.z_range[1]) / 2
+
         self.optim_pos_x = self._initial_pos_x
         self.optim_pos_y = self._initial_pos_y
         self.optim_pos_z = self._initial_pos_z

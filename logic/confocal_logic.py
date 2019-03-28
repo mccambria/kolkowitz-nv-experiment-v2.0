@@ -739,7 +739,7 @@ class ConfocalLogic(GenericLogic):
         try:
             if self._scan_counter == 0:
                 # make a line from the current cursor position to
-                # the starting position of the first scan line of the scan
+                # the starting position of the first sn can line of the scan
                 rs = self.return_slowness
                 lsx = np.linspace(self._current_x, image[self._scan_counter, 0, 0], rs)
                 lsy = np.linspace(self._current_y, image[self._scan_counter, 0, 1], rs)

@@ -18,6 +18,7 @@ from interface.confocal_scanner_interface import ConfocalScannerInterface
 
 # Library modules
 import os
+import numpy
 from pipython import GCSDevice
 from pipython import pitools
 
@@ -38,7 +39,7 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
     _piezoDllPath = os.path.abspath(os.path.join(os.path.dirname(__file__),
                                                  "GCSTranslator",
                                                  "PI_GCS2_DLL_x64.dll"))
-    
+
     _piezo_voltage_ranges = ConfigOption('piezo_voltage_ranges', missing='error')
     _piezo_position_ranges = ConfigOption('piezo_position_ranges', missing='error')
 
@@ -196,21 +197,81 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
     def scan_line(self, line_path=None, pixel_clock=False):
         """Scans a line and returns the counts on that line.
 
-        @param float[k][n] line_path: array k of n-part tuples
-            defining the pixel positions
+        @param numpy.ndarray(float) line_path: k x n list defining the
+            pixel positions, k is number of pixels, n is number of axes
         @param bool pixel_clock: whether we need to output
             a pixel clock for this line
 
-        @return float[k][m]: the photon counts per second for
+        @return numpy.ndarray(float): k x m, the photon counts per second for
             k pixels with m channels
         """
-        
-        if line_path is not None:
-            galvo_path = line_path[:][0:2]
-        
-        galvoReturn = self._galvo.scan_line(galvo_path, pixel_clock)
-        
-        return galvoReturn
+
+        if line_path is None:
+            return -1
+
+        # Figure out what axes we're scanning.
+        # We support xy scans and z scans.
+
+        # Assume we're scanning in x and y rather than z
+        zScan = False
+
+        # Get the values for each axis
+        galvo_path = line_path[:][0:2]
+        galvo_path_list = galvo_path.astype(list)
+        xVals = galvo_path_list[:][0]
+        yVals = galvo_path_list[:][1]
+        zVals = line_path[:][2]
+
+        # Get the first value for each axis
+        firstX = line_path[0]
+        firstY = line_path[0]
+        firstZ = line_path[0]
+
+        # Check if the scan is constant along a given axis. If all the
+        # values along the axis are the same, then it is constant.
+        constantX = xVals.count(firstX) == len(xVals)
+        constantY = yVals.count(firstY) == len(yVals)
+        constantZ = zVals.count(firstZ) == len(zVals)
+
+        # If this looks like a z scan, then x and y better be constant
+        if not constantZ:
+            if constantX and constantY:
+                zScan = True
+            else:
+                return -1
+
+        if zScan:
+            counts = self._scan_z_line(firstX, firstY, zVals, pixel_clock)
+        else:
+            counts = self._galvo.scan_line(galvo_path, pixel_clock)
+
+        return counts
+
+    def _scan_z_line(self, x_pos, y_pos, z_path, pixel_clock=False):
+        """Scans a line in z and returns the counts along the line.
+
+        @param numpy.ndarray(float) line_path: k x n list defining the
+            pixel positions, k is number of pixels, n is number of axes
+        @param bool pixel_clock: whether we need to output
+            a pixel clock for this line
+
+        @return numpy.ndarray(float): k x m, the photon counts per second for
+            k pixels with m channels
+        """
+
+        galvo_vals = numpy.array([[x_pos, y_pos]])
+
+        for z_index in range(len(z_path)):
+
+            z_pos = z_path[z_index]
+            self._set_piezo_voltage(z_pos)
+
+            new_counts = self._galvo.scan_line(galvo_vals, pixel_clock)
+
+            if z_index == 0:
+                counts = new_counts
+            else:
+                counts.append(new_counts)
 
     def close_scanner(self):
         """Closes the scanner and cleans up afterwards.
@@ -229,12 +290,15 @@ class GalvoObjectivePiezo(Base, ConfocalScannerInterface):
         """
 
         return self._galvo.close_scanner_clock()
-    
+
     def _set_piezo_voltage(self, voltage):
         """Write a z voltage to the piezo."""
-        
+
+        if (voltage < 0) or (voltage > 100):
+            return
+
         # Turn off closed loop feedback
         self._piezo.SVO(self._piezo_axis, False)
-    
+
         # Write the value
         self._piezo.SVA(self._piezo_axis, voltage)
